@@ -1,0 +1,22 @@
+# Fichiers de compilation et de débogage
+/debug/
+
+# Fichiers objets et exécutables
+*.o
+*.a
+*.so
+*.out
+
+# Fichiers temporaires
+*.tmp
+*~
+
+# Fichiers générés par les éditeurs
+.vscode/
+.idea/
+
+# Fichiers système
+.DS_Store
+
+# Autre
+feuille-route.txt
