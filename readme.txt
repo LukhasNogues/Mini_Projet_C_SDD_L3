@@ -11,6 +11,11 @@ Mini_Projet/
 |    +--- tree-avl/
 |    +--- tree-rb/
 |
++--- resultats-perf/
+|    |
+|    + avec-valgrind/
+|    + sans-valgrind/
+|
 +--- src/
 |    |
 |    +--- hash/
@@ -18,6 +23,10 @@ Mini_Projet/
 |    +--- tree/
 |    +--- tree-avl/
 |    +--- tree-rb/
+|
++--- .git/
+|    |
+|    +--- [...]
 |
 +--- readme.txt
 +--- .gitignore

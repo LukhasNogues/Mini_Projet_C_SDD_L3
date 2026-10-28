@@ -1,9 +1,8 @@
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <assert.h>
-#include <limits.h>
 #include <time.h>
+#include <limits.h>
 
 #include "./tree-rb.h"
 
@@ -29,20 +28,23 @@
  * > ./test-tree-rb
  */
 
+#define NMAX 100000
 
+// Entiers stockés sur la pile : rien à faire en terme de suppression (durée de vie
+// automatique).
 
-int int_cmp(const void* pn, const void* pm) {
-	if (!pn || !pm) return -2 ;
+size_t intsize = sizeof(int) ;
 
-	const int n = *(const int*) pn ;
-	const int m = *(const int*) pm ;
-	return (n > m) - (n < m) ;
+int int_cmp(const void* data1, const void* data2) {
+	if (!data1 || !data2) return -2 ;
+
+	const int n1 = *(const int*) data1 ;
+	const int n2 = *(const int*) data2 ;
+	return (n1 > n2) - (n1 < n2) ;
 }
 
-void int_del(void* pn) {
-	(void) pn ;
-	// Entiers stockés sur la pile : rien à faire en terme de suppression (durée de vie
-	// automatique).
+void int_del(void* data) {
+	(void) data ;
 }
 
 void int_print(const void* data) {
@@ -51,6 +53,11 @@ void int_print(const void* data) {
 	printf("%d", *(const int*) data) ;
 }
 
+
+// Réels flottants stockés sur la pile : rien à faire en terme de suppression (durée de vie
+// automatique).
+
+/*size_t dblsize = sizeof(double) ;
 
 int double_cmp(const void* data1, const void* data2) {
 	if (!data1 || !data2) return -2 ;
@@ -68,8 +75,11 @@ void double_print(const void* data) {
 	if (!data) return ;
 
 	printf("%.3lf", *(const double*) data) ;
-}
+}*/
 
+
+// Chaînes non allouées dynamiquement (ni malloc/calloc, ni strdup) : les chaînes utilisées
+// sont celles dans le .rodata (read only data), du texte brut, ou celles dans des char[].
 
 int string_cmp(const void* str1, const void* str2) {
 	if (!str1 || !str2) return -2 ;
@@ -80,8 +90,6 @@ int string_cmp(const void* str1, const void* str2) {
 	else return 1 ; // cmp > 0
 }
 
-// Chaînes non allouées dynamiquement (ni malloc/calloc, ni strdup) : chaînes utilisées
-// dans le .rodata (read only data), texte brut.
 void string_del(void* str) {
 	(void) str ;
 }
@@ -94,241 +102,454 @@ void string_print(const void* str) {
 
 
 
-static int verifier_arbre(TreeRB* node, TreeRB* parent, long long min, long long max, bool* valide) ;
-static void verifier_arbre_complet(TreeRB* racine) ;
-static void tester_suppressions(
-    const char* nom,
-    const int* insertions,
-    size_t nb_insertions,
-    const int* suppressions,
-    size_t nb_suppressions
-) ;
+typedef struct DicoEntry {
+	char key[9] ;
+	char value[13] ;
+} DicoEntry ;
+
+// DicoEntry stockés sur la pile (à moins d'un stack overflow dans les tests) :
+// rien à faire en terme de suppression (durée de vie automatique).
+
+size_t dicoEntrysize = sizeof(DicoEntry) ;
+
+int dicoEntry_cmp(const void* data1, const void* data2) {
+	if (!data1 || !data2) return -2 ;
+
+	const DicoEntry* de1 = (const DicoEntry*) data1 ;
+	const DicoEntry* de2 = (const DicoEntry*) data2 ;
+	int cmp = strcmp(de1->key, de2->key) ;
+	// On convient que la clé (key) seule doit permettre d'identifier
+	// l'instance de la structure (l'entrée du dictionnaire) de manière unique.
+	// Avoir un dictionnaire (un arbre rouge-noir sera utilisé en tant que dictionnaire
+	// pour stocker des entrées) avec les DicoEntries suivantes :
+	//	{
+	//		"Mot" : "définition_1",
+	//		"Mot" : "définition 2",
+	//	}
+	// doit être impossible.
+	if (cmp < 0) return -1 ;
+	else if (!cmp) return 0 ;
+	return 1 ; // cmp > 0
+}
+
+void dicoEntry_del(void* data) {
+	(void) data ;
+}
+
+void dicoEntry_print(const void* data) {
+	if (!data) return ;
+
+	const DicoEntry* de = (const DicoEntry*) data ;
+	printf("\"%s\" : \"%s\"", de->key, de->value) ;
+}
 
 
+int rand_int(int min, int max) {
+	// méthode du rejet (rejection sampling)
+	unsigned int range = (unsigned int) (max - min) + 1 ;
+	unsigned int limit = (unsigned int) RAND_MAX + 1 ;
 
+	limit -= limit % range ;
+	// On retire les valeurs excédentaires pour que limit soit un multiple de range.
+	unsigned int r ;
+	do {
+		r = (unsigned int) rand() ;
+	} while (r >= limit) ; // On rejette les valeurs excédentaires.
+	return min + (int) (r % range) ; // On ramène le résultat dans l'intervalle.
+	// Puisque le nombre de valeurs acceptées est un multiple de range,
+	// chaque résultat possible possède le même nombre de correspondances.
+	// Attention à deux limites de cette implémentation :
+	// - Elle suppose min <= max et que les calculs ne débordent pas.
+	// - Si RAND_MAX == UINT_MAX, le calcul de RAND_MAX + 1 peut déborder.
+	// Sur les implémentations courantes, ce n'est généralement pas un problème,
+	// mais le code n'est pas universellement sûr.
+}
+
+char* rand_str(char* clbuffer, size_t clbuffer_cap, size_t min_len, size_t max_len) {
+	// Chaîne aléatoire de longueur aléatoire entre min_len et max_len
+	static const char charset[] = "0123456789 abcdefghijklmnopqrstuvwxyz\'ABCDEFGHIJKLMNOPQRSTUVWXYZ" ;
+	if (!clbuffer || min_len > max_len || clbuffer_cap == 0 || max_len >= clbuffer_cap)
+		return NULL ;
+
+	size_t len = rand_int((int) min_len, (int) max_len) ;
+	size_t charset_len = sizeof(charset) - 1UL ;
+
+	for (size_t i = 0UL ; i < len ; ++i)
+		clbuffer[i] = charset[rand_int(0, (int) charset_len - 1)] ;
+
+	clbuffer[len] = '\0' ;
+	return clbuffer ;
+}
+
+DicoEntry rand_dicoEntry(void) {
+	DicoEntry result ;
+	char* rand_key = rand_str(
+		(char[9]) {0}, 9, 4, 8
+	) ;
+	char* rand_value = rand_str(
+		(char[13]) {0}, 13, 6, 12
+	) ;
+	strcpy(result.key, rand_key) ;
+	strcpy(result.value, rand_value) ;
+	return result ;
+}
+
+
+// Pour visualiser : https://rbt-visualizer.netlify.app/
 int main(void) {
-	clock_t chrono_start = clock() ;
+	// Pour la simplification de la gestion des erreurs.
+	int EXIT_CODE = EXIT_FAILURE ;
 
-	TreeRB* arbre_test = treeRB_new() ;
+	// Initialiser le RNG.
+	srand((unsigned int) time(NULL)) ;
 
-	printf("======== Insertion 1 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {1}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Insertion 6 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {6}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Insertion 8 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {8}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Insertion 11 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {11}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Insertion 13 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {13}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Insertion 15 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {15}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Insertion 17 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {17}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Insertion 22 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {22}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Insertion 25 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {25}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Insertion 27 ========\n") ;
-	treeRB_add_data(&arbre_test, &(int) {27}, sizeof(int), int_cmp) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Suppression 22 ========\n") ;
-	treeRB_del_data(&arbre_test, &(int) {22}, int_cmp, NULL) ;
-	treeRB_print(arbre_test, int_print) ;
-
-	printf("======== Libération des ressources allouées ========\n") ;
-	treeRB_delete(arbre_test, NULL) ;
-
-	// https://rbt-visualizer.netlify.app/
-	const int insertions1[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 } ;
-	const int suppressions1[] = { 1, 15, 8, 4, 12, 6, 10, 2, 14, 7, 9, 11, 13, 3, 5 } ;
-	tester_suppressions(
-		"Insertion ordonnee, suppressions variees",
-		insertions1, sizeof insertions1 / sizeof insertions1[0],
-		suppressions1, sizeof suppressions1 / sizeof suppressions1[0]
-	) ;
-
-	const int insertions2[] = { 8, 4, 12, 2, 6, 10, 14, 1, 3, 5, 7, 9, 11, 13, 15 } ;
-	const int suppressions2[] = { 1, 3, 2, 5, 7, 6, 4, 9, 11, 10, 13, 15, 14, 12, 8 } ;
-	tester_suppressions(
-		"Insertion equilibree, suppressions par groupes",
-		insertions2, sizeof insertions2 / sizeof insertions2[0],
-		suppressions2, sizeof suppressions2 / sizeof suppressions2[0]
-	) ;
-
-	const int insertions3[] = { 10, 5, 15, 2, 7, 12, 18, 1, 3, 6, 8, 11, 13, 17, 20 } ;
-	const int suppressions3[] = { 10, 5, 15, 2, 18, 7, 12, 1, 20, 3, 6, 8, 11, 13, 17 } ;
-	tester_suppressions(
-		"Troisieme arbre, suppression de la racine et des sous-arbres",
-		insertions3, sizeof insertions3 / sizeof insertions3[0],
-		suppressions3, sizeof suppressions3 / sizeof suppressions3[0]
-	) ;
-
-	// Test Droite - Gauche
-	puts("Test Droite - Gauche") ;
-	TreeRB* arbre_test2 = treeRB_new() ;
-	treeRB_add_data(&arbre_test2, &(double) {  5. }, sizeof(double), double_cmp) ;
-	treeRB_add_data(&arbre_test2, &(double) { 10. }, sizeof(double), double_cmp) ;
-	treeRB_add_data(&arbre_test2, &(double) { 7.5 }, sizeof(double), double_cmp) ;
-	// Si le programme tourne en boucle : voir _treeRB_insert_case4
-	treeRB_print(arbre_test2, double_print) ;
-	treeRB_delete(arbre_test2, NULL) ;
-
-	// Test Gauche - Droite
-	puts("Test Gauche - Droite") ;
-	TreeRB* arbre_test3 = treeRB_new() ;
-	treeRB_add_data(&arbre_test3, &(double) { 5. }, sizeof(double), double_cmp) ;
-	treeRB_add_data(&arbre_test3, &(double) { 1. }, sizeof(double), double_cmp) ;
-	treeRB_add_data(&arbre_test3, &(double) { 3. }, sizeof(double), double_cmp) ;
-	// Si le programme tourne en boucle : voir _treeRB_insert_case4
-	treeRB_print(arbre_test3, double_print) ;
-	treeRB_delete(arbre_test3, NULL) ;
+	// Déclaration des arbres.
+	TreeRB* arbre_entiers ;
+	TreeRB* arbre_chaines ;
+	TreeRB* arbre_dictionnaire ;
 
 
-	puts("Test chaînes de caractères") ;
-	TreeRB* arbre_test4 = treeRB_new() ;
-	treeRB_add_data(&arbre_test4, "42", sizeof "42", string_cmp) ;
-	treeRB_add_data(&arbre_test4, "69", sizeof "69", string_cmp) ;
-	treeRB_add_data(&arbre_test4, "100", sizeof "100", string_cmp) ;
-	treeRB_add_data(&arbre_test4, "17", sizeof "17", string_cmp) ;
-	treeRB_add_data(&arbre_test4, "2000", sizeof "2000", string_cmp) ;
-	treeRB_print(arbre_test4, string_print) ;
-	// L'affichage laisse penser que "2000" est le fils gauche de "69". Vérification :
-	const TreeRB* node_having_2000 = treeRB_search(arbre_test4, "2000", string_cmp) ;
-	TreeRB* parent_of_n2000 = treeRB_get_parent(node_having_2000) ;
-	string_print(treeRB_get_data(parent_of_n2000)) ; // Normalement "17"
 
-	treeRB_delete(arbre_test4, string_del) ;
+	// Ouverture des fichiers dans lesquels seront renseignés les résultats.
+	FILE* treerb_int_insert = fopen("./TREERB_INT_INSERT.txt", "w") ;
+	if (!treerb_int_insert) goto exit_prog ;
 
-	printf("\nTous les tests sont passés !\n") ;
+	FILE* treerb_int_search = fopen("./TREERB_INT_SEARCH.txt", "w") ;
+	if (!treerb_int_search) goto cleanup_treerb_int_insert ;
 
-	double elapsed_time = (clock() - chrono_start) / (CLOCKS_PER_SEC + 0.) ;
-	printf("Temps d'exécution = %.6lf s\n", elapsed_time) ;
+	FILE* treerb_int_delete = fopen("./TREERB_INT_DELETE.txt", "w") ;
+	if (!treerb_int_delete) goto cleanup_treerb_int_search ;
 
-	return EXIT_SUCCESS ;
-}
+	fprintf(treerb_int_insert, "n;T_ms(n)\n") ;
+	fprintf(treerb_int_search, "n;T_ms(n)\n") ;
+	fprintf(treerb_int_delete, "n;T_ms(n)\n") ;
 
-/**
- * Vérifier récursivement les propriétés de l'arbre rouge-noir.
- * Retourne la hauteur noire du sous-arbre.
- */
-static int verifier_arbre(TreeRB* node, TreeRB* parent, long long min, long long max, bool* valide) {
-	if (!node) return 1 ;
+	puts("==== Insertions / recherche / suppressions : arbre rouge-noir d'entiers ====") ;
 
-	int valeur = *(int*) treeRB_get_data(node) ;
-	NodeColor couleur = treeRB_get_color(node) ;
+	for (int n = 100 ; n <= NMAX ; n += 100) {
+		// Reset à NULL à chaque début de tour de boucle.
+		arbre_entiers = treeRB_new() ;
 
-	/* Propriété de l'arbre binaire de recherche. */
-	if (valeur <= min || valeur >= max) *valide = false ;
+		/**
+		 * ================ INSERTIONS ================
+		 */
+		// Génération de n entiers aléatoires avant l'insertion :
+		int* rand_int_array = malloc(n * sizeof *rand_int_array) ;
+		if (!rand_int_array) goto cleanup_treerb_int_delete ;
+		for (int i = 0 ; i < n ; ++i) rand_int_array[i] = rand_int(0, 10*n) ;
+	
+		// Début du chrono avant les n insertions
+		clock_t timer_start = clock() ;
 
-	/* Cohérence des pointeurs parent. */
-	if (treeRB_get_parent(node) != parent) *valide = false ;
-
-	TreeRB* gauche = treeRB_get_left(node) ;
-	TreeRB* droite = treeRB_get_right(node) ;
-
-	/* Un nœud rouge ne peut pas avoir de fils rouge. */
-	if (couleur == RED) {
-		if (treeRB_get_color(gauche) == RED || treeRB_get_color(droite) == RED)
-			*valide = false ;
-	}
-	int hg = verifier_arbre(gauche, node, min, valeur, valide) ;
-	int hd = verifier_arbre(droite, node, valeur, max, valide) ;
-	/* Les deux sous-arbres doivent avoir la même hauteur noire. */
-	if (hg != hd) *valide = false ;
-	return hg + (couleur == BLACK) ;
-}
-
-static void verifier_arbre_complet(TreeRB* racine) {
-	if (racine && treeRB_get_color(racine) != BLACK) {
-		fprintf(stderr, "ERREUR : la racine n'est pas noire !\n") ;
-		abort() ;
-	}
-	bool valide = true ;
-
-	verifier_arbre(racine, NULL, LLONG_MIN, LLONG_MAX, &valide) ;
-
-	if (!valide) {
-		fprintf(stderr, "ERREUR : arbre rouge-noir invalide !\n") ;
-		treeRB_print(racine, int_print) ;
-		abort() ;
-	}
-}
-
-static void tester_suppressions(
-	const char* nom,
-	const int* insertions, size_t nb_insertions,
-	const int* suppressions, size_t nb_suppressions
-) {
-	printf("\n========================================\n") ;
-	printf("TEST : %s\n", nom) ;
-	printf("========================================\n") ;
-
-	TreeRB* arbre = treeRB_new() ;
-
-	/* Construction de l'arbre. */
-	for (size_t i = 0 ; i < nb_insertions ; ++i) {
-		assert(treeRB_add_data(&arbre, &insertions[i], sizeof(int), int_cmp)) ;
-		verifier_arbre_complet(arbre) ;
-	}
-
-	printf("\nArbre initial :\n") ;
-	treeRB_print(arbre, int_print) ;
-
-	/* Suppressions successives. */
-	for (size_t i = 0 ; i < nb_suppressions ; ++i) {
-		int valeur = suppressions[i] ;
-
-		printf("\n----------------------------------------\n") ;
-		printf("Suppression de %d\n", valeur) ;
-		printf("----------------------------------------\n") ;
-
-		assert(treeRB_search(arbre, &valeur, int_cmp) != NULL) ;
-		bool succes = treeRB_del_data(&arbre, &valeur, int_cmp, int_del) ;
-
-		assert(succes) ;
-		/* La valeur supprimée ne doit plus être présente. */
-		assert(treeRB_search(arbre, &valeur, int_cmp) == NULL) ;
-
-		/* Vérification complète après chaque suppression. */
-		verifier_arbre_complet(arbre) ;
-		treeRB_print(arbre, int_print) ;
-
-		/* Les autres valeurs qui ne sont pas encore supprimées
-			doivent toujours être présentes. */
-		for (size_t j = 0 ; j < nb_insertions ; ++j) {
-			int candidate = insertions[j] ;
-			bool deja_supprimee = false ;
-
-			for (size_t k = 0 ; k <= i ; ++k) {
-				if (suppressions[k] == candidate) {
-					deja_supprimee = true ;
-					break ;
-				}
-			}
-			if (!deja_supprimee) assert(treeRB_search(arbre, &candidate, int_cmp) != NULL) ;
+		// Les n insertions (100, puis 200, puis 300, ... jusqu'à NMAX)
+		for (int k = 1 ; k <= n ; ++k) {
+			bool insert_is_successful = treeRB_add_data(&arbre_entiers, &(rand_int_array[k - 1]), intsize, int_cmp) ;
+			if (!insert_is_successful) goto cleanup_int_then_next_loop_turn ;
 		}
+
+		// Fin du chrono après les n insertions
+		double elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		double elapsed_in_ms = 1e3 * elapsed_in_s ;
+
+		// Copie du temps écoulé pour les n insertions dans le fichier.
+		fprintf(treerb_int_insert, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		/**
+		 * ================ RECHERCHES ================
+		 */
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une donnée déjà insérée
+				// (mais piochée au hasard dans le tableau des entiers aléatoires générés).
+				int rand_i = rand_int(0, n - 1) ;
+				treeRB_search(arbre_entiers, &(rand_int_array[rand_i]), int_cmp) ;
+			}
+			else {
+				// Sinon, on recherche une valeur aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_int".
+				treeRB_search(arbre_entiers, &(int) { rand_int(0, 10*n) }, int_cmp) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(treerb_int_search, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		/**
+		 * ================ SUPPRESSIONS ================
+		 */
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : suppression d'une donnée déjà insérée
+				// (mais piochée au hasard dans le tableau des entiers aléatoires générés).
+				int rand_i = rand_int(0, n - 1) ;
+				treeRB_del_data(&arbre_entiers, &(rand_int_array[rand_i]), int_cmp, int_del) ;
+			}
+			else {
+				// Sinon, on supprime une valeur aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_int".
+				treeRB_del_data(&arbre_entiers, &(int) { rand_int(0, 10*n) }, int_cmp, int_del) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(treerb_int_delete, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		// free à chaque fin de tour de boucle.
+	cleanup_int_then_next_loop_turn :
+		free(rand_int_array) ;
+		treeRB_delete(arbre_entiers, int_del) ;
 	}
-	assert(arbre == NULL) ;
-	printf("\nTEST REUSSI : %s\n", nom) ;
-	treeRB_delete(arbre, int_del) ;
+
+
+
+	// Ouverture des fichiers dans lesquels seront renseignés les résultats.
+	FILE* treerb_str_insert = fopen("./TREERB_STR_INSERT.txt", "w") ;
+	if (!treerb_str_insert) goto cleanup_treerb_int_delete ;
+
+	FILE* treerb_str_search = fopen("./TREERB_STR_SEARCH.txt", "w") ;
+	if (!treerb_str_search) goto cleanup_treerb_str_insert ;
+
+	FILE* treerb_str_delete = fopen("./TREERB_STR_DELETE.txt", "w") ;
+	if (!treerb_str_delete) goto cleanup_treerb_str_search ;
+
+	fprintf(treerb_str_insert, "n;T_ms(n)\n") ;
+	fprintf(treerb_str_search, "n;T_ms(n)\n") ;
+	fprintf(treerb_str_delete, "n;T_ms(n)\n") ;
+
+	puts("==== Insertions / recherche / suppressions : arbre rouge-noir de String ====") ;
+	
+	for (int n = 100 ; n <= NMAX ; n += 100) {
+		// Reset à NULL à chaque début de tour de boucle.
+		arbre_chaines = treeRB_new() ;
+
+		/**
+		 * ================ INSERTIONS ================
+		 */
+		// Génération de n chaînes aléatoires de longueur entre 8 et 16 avant l'insertion :
+		char (*rand_str_array)[17] = malloc(n * sizeof *rand_str_array) ;
+		// Pointeur vers des tableaux de 17 caractères
+		if (!rand_str_array) goto cleanup_treerb_str_delete ;
+		for (int i = 0 ; i < n ; ++i)
+			rand_str(rand_str_array[i], sizeof rand_str_array[i], 8, 16) ;
+
+		// Début du chrono avant les n insertions
+		clock_t timer_start = clock() ;
+
+		// Les n insertions (100, puis 200, puis 300, ... jusqu'à NMAX)
+		for (int k = 1 ; k <= n ; ++k) {
+			size_t strsize = strlen(rand_str_array[k - 1]) + 1UL ;
+			bool insert_is_successful = treeRB_add_data(&arbre_chaines, rand_str_array[k - 1], strsize, string_cmp) ;
+			if (!insert_is_successful) goto cleanup_str_then_next_loop_turn ;
+		}
+
+		// Fin du chrono après les n insertions
+		double elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		double elapsed_in_ms = 1e3 * elapsed_in_s ;
+
+		// Copie du temps écoulé pour les n insertions dans le fichier.
+		fprintf(treerb_str_insert, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		/**
+		 * ================ RECHERCHES ================
+		 */
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une donnée déjà insérée
+				// (mais piochée au hasard dans le tableau des chaînes aléatoires générées).
+				int rand_i = rand_int(0, n - 1) ;
+				treeRB_search(arbre_chaines, rand_str_array[rand_i], string_cmp) ;
+			}
+			else {
+				// Sinon, on recherche une chaîne aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_str".
+				char* chaine_alea = rand_str((char[17]) { 0 }, 17, 8, 16) ;
+				treeRB_search(arbre_chaines, chaine_alea, string_cmp) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(treerb_str_search, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		/**
+		 * ================ SUPPRESSIONS ================
+		 */
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une donnée déjà insérée
+				// (mais piochée au hasard dans le tableau des chaînes aléatoires générées).
+				int rand_i = rand_int(0, n - 1) ;
+				treeRB_del_data(&arbre_chaines, rand_str_array[rand_i], string_cmp, string_del) ;
+			}
+			else {
+				// Sinon, on supprime une chaîne aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_str".
+				char* chaine_alea = rand_str((char[17]) { 0 }, 17, 8, 16) ;
+				treeRB_del_data(&arbre_chaines, chaine_alea, string_cmp, string_del) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(treerb_str_delete, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		// free à chaque fin de tour de boucle.
+	cleanup_str_then_next_loop_turn :
+		free(rand_str_array) ;
+		treeRB_delete(arbre_chaines, string_del) ;
+	}
+
+
+
+	// Ouverture des fichiers dans lesquels seront renseignés les résultats.
+	FILE* treerb_dicoEntry_insert = fopen("./TREERB_DICOENTRY_INSERT.txt", "w") ;
+	if (!treerb_dicoEntry_insert) goto cleanup_treerb_str_delete ;
+
+	FILE* treerb_dicoEntry_search = fopen("./TREERB_DICOENTRY_SEARCH.txt", "w") ;
+	if (!treerb_dicoEntry_search) goto cleanup_treerb_dicoEntry_insert ;
+
+	FILE* treerb_dicoEntry_delete = fopen("./TREERB_DICOENTRY_DELETE.txt", "w") ;
+	if (!treerb_dicoEntry_delete) goto cleanup_treerb_dicoEntry_search ;
+
+	fprintf(treerb_dicoEntry_insert, "n;T_ms(n)\n") ;
+	fprintf(treerb_dicoEntry_search, "n;T_ms(n)\n") ;
+	fprintf(treerb_dicoEntry_delete, "n;T_ms(n)\n") ;
+
+	puts("==== Insertions / recherche / suppressions : arbre rouge-noir de DicoEntry ====") ;
+
+	for (int n = 100 ; n <= NMAX ; n += 100) {
+		// Reset à NULL à chaque début de tour de boucle.
+		arbre_dictionnaire = treeRB_new() ;
+
+		/**
+		 * ================ INSERTIONS ================
+		 */
+		// Génération de n entrées aléatoires avant l'insertion :
+		DicoEntry* rand_dicoEntry_array = malloc(n * sizeof *rand_dicoEntry_array) ;
+		if (!rand_dicoEntry_array) goto cleanup_treerb_dicoEntry_delete ;
+		for (int i = 0 ; i < n ; ++i) {
+			char key[9]		= { 0 } ;
+			char value[13]	= { 0 } ;
+			rand_dicoEntry_array[i] = rand_dicoEntry() ;
+		}
+
+		// Début du chrono avant les n insertions
+		clock_t timer_start = clock() ;
+
+		// Les n insertions (100, puis 200, puis 300, ... jusqu'à NMAX)
+		for (int k = 1 ; k <= n ; ++k) {
+			bool insert_is_successful = treeRB_add_data(
+				&arbre_dictionnaire,
+				&(rand_dicoEntry_array[k - 1]),
+				dicoEntrysize,
+				dicoEntry_cmp
+			) ;
+			// copie des pointeurs .key et .value dans le .data du noeud concerné.
+			if (!insert_is_successful) goto cleanup_dico_then_next_loop_turn ;
+		}
+
+		// Fin du chrono après les n insertions
+		double elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		double elapsed_in_ms = 1e3 * elapsed_in_s ;
+
+		// Copie du temps écoulé pour les n insertions dans le fichier.
+		fprintf(treerb_dicoEntry_insert, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		/**
+		 * ================ RECHERCHES ================
+		 */
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une entrée déjà insérée
+				// (mais piochée au hasard dans le tableau des entrées aléatoires générées).
+				int rand_i = rand_int(0, n - 1) ;
+				treeRB_search(
+					arbre_dictionnaire,
+					&(rand_dicoEntry_array[rand_i]),
+					dicoEntry_cmp
+				) ;
+			}
+			else {
+				// Sinon, on recherche une entrée aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_dicoEntry".
+				char key[9]		= { 0 } ;
+				char value[13]	= { 0 } ;
+				DicoEntry dicoEntry_alea = rand_dicoEntry() ;
+				treeRB_search(arbre_dictionnaire, &dicoEntry_alea, dicoEntry_cmp) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(treerb_dicoEntry_search, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		/**
+		 * ================ SUPPRESSIONS ================
+		 */
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une entrée déjà insérée
+				// (mais piochée au hasard dans le tableau des entrées aléatoires générées).
+				int rand_i = rand_int(0, n - 1) ;
+				treeRB_del_data(
+					&arbre_dictionnaire,
+					&(rand_dicoEntry_array[rand_i]),
+					dicoEntry_cmp,
+					dicoEntry_del
+				) ;
+			}
+			else {
+				// Sinon, on supprime une entrée aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_dicoEntry".
+				char key[9]		= { 0 } ;
+				char value[13]	= { 0 } ;
+				DicoEntry dicoEntry_alea = rand_dicoEntry() ;
+				treeRB_del_data(
+					&arbre_dictionnaire,
+					&dicoEntry_alea,
+					dicoEntry_cmp,
+					dicoEntry_del
+				) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(treerb_dicoEntry_delete, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		// free à chaque fin de tour de boucle.
+	cleanup_dico_then_next_loop_turn :
+		free(rand_dicoEntry_array) ;
+		treeRB_delete(arbre_dictionnaire, dicoEntry_del) ;
+	}
+
+
+
+	EXIT_CODE = EXIT_SUCCESS ;
+
+cleanup_treerb_dicoEntry_delete :
+	fclose(treerb_dicoEntry_delete) ;
+cleanup_treerb_dicoEntry_search :
+	fclose(treerb_dicoEntry_search) ;
+cleanup_treerb_dicoEntry_insert :
+	fclose(treerb_dicoEntry_insert) ;
+
+cleanup_treerb_str_delete :
+	fclose(treerb_str_delete) ;
+cleanup_treerb_str_search :
+	fclose(treerb_str_search) ;
+cleanup_treerb_str_insert :
+	fclose(treerb_str_insert) ;
+
+cleanup_treerb_int_delete :
+	fclose(treerb_int_delete) ;
+cleanup_treerb_int_search :
+	fclose(treerb_int_search) ;
+cleanup_treerb_int_insert :
+	fclose(treerb_int_insert) ;
+
+exit_prog :
+	return EXIT_CODE ;
 }
