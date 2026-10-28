@@ -237,7 +237,7 @@ int main(void) {
 		int* rand_int_array = malloc(n * sizeof *rand_int_array) ;
 		if (!rand_int_array) goto cleanup_treerb_int_delete ;
 		for (int i = 0 ; i < n ; ++i) rand_int_array[i] = rand_int(0, 10*n) ;
-	
+
 		// Début du chrono avant les n insertions
 		clock_t timer_start = clock() ;
 
@@ -430,8 +430,6 @@ int main(void) {
 		DicoEntry* rand_dicoEntry_array = malloc(n * sizeof *rand_dicoEntry_array) ;
 		if (!rand_dicoEntry_array) goto cleanup_treerb_dicoEntry_delete ;
 		for (int i = 0 ; i < n ; ++i) {
-			char key[9]		= { 0 } ;
-			char value[13]	= { 0 } ;
 			rand_dicoEntry_array[i] = rand_dicoEntry() ;
 		}
 
@@ -475,8 +473,6 @@ int main(void) {
 			else {
 				// Sinon, on recherche une entrée aléatoire dans l'arbre,
 				// qu'elle y soit ou non, on fait "confiance à rand_dicoEntry".
-				char key[9]		= { 0 } ;
-				char value[13]	= { 0 } ;
 				DicoEntry dicoEntry_alea = rand_dicoEntry() ;
 				treeRB_search(arbre_dictionnaire, &dicoEntry_alea, dicoEntry_cmp) ;
 			}
@@ -504,8 +500,6 @@ int main(void) {
 			else {
 				// Sinon, on supprime une entrée aléatoire dans l'arbre,
 				// qu'elle y soit ou non, on fait "confiance à rand_dicoEntry".
-				char key[9]		= { 0 } ;
-				char value[13]	= { 0 } ;
 				DicoEntry dicoEntry_alea = rand_dicoEntry() ;
 				treeRB_del_data(
 					&arbre_dictionnaire,
