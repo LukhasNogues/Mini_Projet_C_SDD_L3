@@ -1,14 +1,12 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <limits.h>
+
 #include "./hash.h"
-//#include "./hash.inc"
 
-typedef struct _Couple {
-    char* mot ;
-    char* def ;
-} Couple ;
-
-
+#define NMAX 100000
 
 size_t hash_string(char* str) {
 	unsigned int hash = 0 ;
@@ -24,33 +22,46 @@ size_t hash_string(char* str) {
 }
 
 
+typedef struct DicoEntry {
+	char key[9] ;
+	char value[13] ;
+} DicoEntry ;
 
-size_t couple_hash(const void* p, size_t n) {
+// DicoEntry stockés sur la pile (à moins d'un stack overflow dans les tests) :
+// rien à faire en terme de suppression (durée de vie automatique).
+
+size_t dicoEntrysize = sizeof(DicoEntry) ;
+
+size_t dicoEntry_hash(const void* p, size_t n) {
     if (!p) return -1 ;
-
-    return hash_string(((Couple*) p)->mot) % n ;
+    return hash_string(((DicoEntry*) p)->key) % n ;
 }
 
-int couple_cmp(const void* p1, const void* p2) {
-    if (!p1 || !p2) return -2 ;
+int dicoEntry_cmp(const void* data1, const void* data2) {
+	if (!data1 || !data2) return -2 ;
 
-    int cmp = strcmp(((Couple*) p1)->mot, ((Couple*) p2)->mot) ;
-    if (cmp < 0) return -1 ;
-    else if (!cmp) return 0 ;
-    return 1 ; // cmp > 0
+	const DicoEntry* de1 = (const DicoEntry*) data1 ;
+	const DicoEntry* de2 = (const DicoEntry*) data2 ;
+	int cmp = strcmp(de1->key, de2->key) ;
+	if (cmp < 0) return -1 ;
+	else if (!cmp) return 0 ;
+	return 1 ; // cmp > 0
 }
 
-void couple_del(void* data) {
-    if (!data) return ;
-    free(((Couple*) data)->mot) ;
-    free(((Couple*) data)->def) ;
+void dicoEntry_del(void* data) {
+	(void) data ;
 }
 
-void couple_print(void* data, FILE* stream) {
-    if (!data || !stream) return ;
-    fprintf(stream, "%s : %s\n", ((Couple*) data)->mot, ((Couple*) data)->def) ;
+void dicoEntry_print(void* data, FILE* stream) {
+	if (!data || !stream) return ;
+
+	DicoEntry* de = (DicoEntry*) data ;
+	fprintf(stream, "\"%s\" : \"%s\"", de->key, de->value) ;
 }
 
+
+
+size_t intsize = sizeof(int) ;
 
 size_t int_hash(const void* p, size_t n) {
     if (!p) return -1 ;
@@ -79,14 +90,14 @@ void int_print(void* data, FILE* stream) {
 }
 
 
-// Chaînes allouées dynamiquement
-size_t str_hash(const void* str, size_t capacite_table) {
+// Chaînes allouées statiquement
+size_t string_hash(const void* str, size_t capacite_table) {
     if (!str) return -1 ;
 
     return hash_string((char*) str) % capacite_table ;
 }
 
-int str_cmp(const void* str1, const void* str2) {
+int string_cmp(const void* str1, const void* str2) {
     if (!str1 || !str2) return -2 ;
 
     int cmp = strcmp((const char*) str1, (const char*) str2) ;
@@ -95,15 +106,68 @@ int str_cmp(const void* str1, const void* str2) {
     else return 1 ; // cmp > 0
 }
 
-void str_del(void* data) {
-    if (!data) return ;
-    free(data) ;
+void string_del(void* data) {
+    (void) data ;
 }
 
-void str_print(void* data, FILE* stream) {
+void string_print(void* data, FILE* stream) {
     if (!data || !stream) return ;
     fprintf(stream, "\"%s\"\n", (const char*) data) ;
 }
+
+// Tools :
+
+
+int rand_int(int min, int max) {
+	// méthode du rejet (rejection sampling)
+	unsigned int range = (unsigned int) (max - min) + 1 ;
+	unsigned int limit = (unsigned int) RAND_MAX + 1 ;
+
+	limit -= limit % range ;
+	// On retire les valeurs excédentaires pour que limit soit un multiple de range.
+	unsigned int r ;
+	do {
+		r = (unsigned int) rand() ;
+	} while (r >= limit) ; // On rejette les valeurs excédentaires.
+	return min + (int) (r % range) ; // On ramène le résultat dans l'intervalle.
+	// Puisque le nombre de valeurs acceptées est un multiple de range,
+	// chaque résultat possible possède le même nombre de correspondances.
+	// Attention à deux limites de cette implémentation :
+	// - Elle suppose min <= max et que les calculs ne débordent pas.
+	// - Si RAND_MAX == UINT_MAX, le calcul de RAND_MAX + 1 peut déborder.
+	// Sur les implémentations courantes, ce n'est généralement pas un problème,
+	// mais le code n'est pas universellement sûr.
+}
+
+char* rand_str(char* clbuffer, size_t clbuffer_cap, size_t min_len, size_t max_len) {
+	// Chaîne aléatoire de longueur aléatoire entre min_len et max_len
+	static const char charset[] = "0123456789 abcdefghijklmnopqrstuvwxyz\'ABCDEFGHIJKLMNOPQRSTUVWXYZ" ;
+	if (!clbuffer || min_len > max_len || clbuffer_cap == 0 || max_len >= clbuffer_cap)
+		return NULL ;
+
+	size_t len = rand_int((int) min_len, (int) max_len) ;
+	size_t charset_len = sizeof(charset) - 1UL ;
+
+	for (size_t i = 0UL ; i < len ; ++i)
+		clbuffer[i] = charset[rand_int(0, (int) charset_len - 1)] ;
+
+	clbuffer[len] = '\0' ;
+	return clbuffer ;
+}
+
+DicoEntry rand_dicoEntry(void) {
+	DicoEntry result ;
+	char* rand_key = rand_str(
+		(char[9]) {0}, 9, 4, 8
+	) ;
+	char* rand_value = rand_str(
+		(char[13]) {0}, 13, 6, 12
+	) ;
+	strcpy(result.key, rand_key) ;
+	strcpy(result.value, rand_value) ;
+	return result ;
+}
+
 
 /**
  * RUN TEST-HASH (test-hash) :
@@ -123,111 +187,387 @@ void str_print(void* data, FILE* stream) {
  * (11) EXECUTE WITH ./test-hash
  */
 
+
 int main(void) {
-    Couple c, c1, c2, c3, c4 ;
-    HashTable* table = hashtable_new(sizeof(Couple), couple_hash, couple_cmp) ;
+	// Pour la simplification de la gestion des erreurs.
+	int EXIT_CODE = EXIT_FAILURE ;
 
-    size_t i ;
-    size_t nb = 10 ;
+	// Initialiser le RNG.
+	srand((unsigned int) time(NULL)) ;
 
-    c1.mot = malloc(10) ;
-	c1.def = malloc(10) ;
-    strcpy(c1.mot, "mot1") ;
-    strcpy(c1.def, "def1") ;
-    // OU JUSTE :
-    //c1.mot = strdup("mot1") ;
-    //c1.def = strdup("def1") ;
-    printf("----------\n") ;
-
-    hashtable_insert(&table, &c1, couple_del) ;
-    hashtable_print(table, couple_print, stdout) ;
-    printf("----------\n") ;
-
-    c2.mot = malloc(10) ;
-    c2.def = malloc(10) ;
-    strcpy(c2.mot, "mot2") ;
-    strcpy(c2.def, "def2") ;
-
-    hashtable_insert(&table, &c2, couple_del) ;
-	hashtable_print(table, couple_print, stdout) ;
-    printf("----------\n") ;
-
-    c3.mot = malloc(10) ;
-    c3.def = malloc(10) ;
-    strcpy(c3.mot, "mot3") ;
-    strcpy(c3.def, "def3") ;
-
-    hashtable_insert(&table, &c3, couple_del) ;
-	hashtable_print(table, couple_print, stdout) ;
-    printf("----------\n") ;
-
-    c4.mot = malloc(10) ;
-    c4.def = malloc(10) ;
-    strcpy(c4.mot, "mot4") ;
-    strcpy(c4.def, "def4") ;
-
-    hashtable_insert(&table, &c4, couple_del) ;
-    hashtable_print(table, couple_print, stdout) ;
-    printf("----------\n") ;
+	// Déclaration des tables de hachage.
+	HashTable* ht_entiers ;
+	HashTable* ht_chaines ;
+	HashTable* ht_dictionnaire ;
 
 
 
-    hashtable_retract(&table, &c1, couple_del) ; // doit enlever c1 de la table
-    hashtable_print(table, couple_print, stdout) ;
-    printf("----------\n") ;
+	// Ouverture des fichiers dans lesquels seront renseignés les résultats.
+	FILE* ht_int_insert = fopen("./HT_INT_INSERT.txt", "w") ;
+	if (!ht_int_insert) goto exit_prog ;
+
+	FILE* ht_int_search = fopen("./HT_INT_SEARCH.txt", "w") ;
+	if (!ht_int_search) goto cleanup_ht_int_insert ;
+
+	FILE* ht_int_delete = fopen("./HT_INT_DELETE.txt", "w") ;
+	if (!ht_int_delete) goto cleanup_ht_int_search ;
+
+	fprintf(ht_int_insert, "n;T_ms(n)\n") ;
+	fprintf(ht_int_search, "n;T_ms(n)\n") ;
+	fprintf(ht_int_delete, "n;T_ms(n)\n") ;
+
+	puts("==== Insertions / recherche / suppressions : HashTable d'entiers ====") ;
+
+	for (int n = 100 ; n <= NMAX ; n += 100) {
+		// Reset à NULL à chaque début de tour de boucle.
+		ht_entiers = hashtable_new(intsize, int_hash, int_cmp) ;
+
+		//**
+		// * ================ INSERTIONS ================
+		// *
+		// Génération de n entiers aléatoires avant l'insertion :
+		int* rand_int_array = malloc(n * sizeof *rand_int_array) ;
+		if (!rand_int_array) goto cleanup_ht_int_delete ;
+		for (int i = 0 ; i < n ; ++i) rand_int_array[i] = rand_int(0, 10*n) ;
+
+		// Début du chrono avant les n insertions
+		clock_t timer_start = clock() ;
+
+		// Les n insertions (100, puis 200, puis 300, ... jusqu'à NMAX)
+		for (int k = 1 ; k <= n ; ++k) {
+			bool insert_is_successful = hashtable_insert(
+				&ht_entiers,
+				&(rand_int_array[k - 1]),
+				int_del
+			) ;
+			if (!insert_is_successful) goto cleanup_int_then_next_loop_turn ;
+		}
+
+		// Fin du chrono après les n insertions
+		double elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		double elapsed_in_ms = 1e3 * elapsed_in_s ;
+
+		// Copie du temps écoulé pour les n insertions dans le fichier.
+		fprintf(ht_int_insert, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		//**
+		// * ================ RECHERCHES ================
+		// *
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une donnée déjà insérée
+				// (mais piochée au hasard dans le tableau des entiers aléatoires générés).
+				int rand_i = rand_int(0, n - 1) ;
+				hashtable_lookup(ht_entiers, &(rand_int_array[rand_i])) ;
+			}
+			else {
+				// Sinon, on recherche une valeur aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_int".
+				hashtable_lookup(ht_entiers, &(int) { rand_int(0, 10*n) }) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(ht_int_search, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		//**
+		// * ================ SUPPRESSIONS ================
+		// *
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : suppression d'une donnée déjà insérée
+				// (mais piochée au hasard dans le tableau des entiers aléatoires générés).
+				int rand_i = rand_int(0, n - 1) ;
+				hashtable_retract(
+					&ht_entiers,
+					&(rand_int_array[rand_i]),
+					int_del
+				) ;
+			}
+			else {
+				// Sinon, on supprime une valeur aléatoire dans la table,
+				// qu'elle y soit ou non, on fait "confiance à rand_int".
+				hashtable_retract(
+					&ht_entiers,
+					&(int) { rand_int(0, 10*n) },
+					int_del
+				) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(ht_int_delete, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		// free à chaque fin de tour de boucle.
+	cleanup_int_then_next_loop_turn :
+		free(rand_int_array) ;
+		hashtable_delete(ht_entiers, int_del) ;
+		//printf("%d\n", n) ;
+	}
 
 
-    Couple* target = hashtable_lookup(table, &c3) ;
-    if (target)
-        printf(
-            "Recherche définition de %s : %s\n"
-            "----------\n",
-            target->mot,
-            target->def
-        ) ;
-    else
-        printf(
-            "Cible non trouvée\n"
-            "----------\n"
-        ) ;
 
-    hashtable_delete(table, couple_del) ;
+	// Ouverture des fichiers dans lesquels seront renseignés les résultats.
+	FILE* ht_str_insert = fopen("./HT_STR_INSERT.txt", "w") ;
+	if (!ht_str_insert) goto cleanup_ht_int_delete ;
 
-//printf("%p\n", table) ;
-    HashTable* table_d_entiers = hashtable_new(sizeof(int), int_hash, int_cmp) ;
-//printf("%p\n", table_d_entiers) ; // même adresse ???
-    int n1 = -91 ;
-    int n2 = 2147483648 ; // integer overflow (dépassement d'entier)
-    int n3 = 0 ;
-    int n4 = 'a' ;
+	FILE* ht_str_search = fopen("./HT_STR_SEARCH.txt", "w") ;
+	if (!ht_str_search) goto cleanup_ht_str_insert ;
 
-    // Entiers : pas créés avec malloc
-    // => stockés sur la pile (stack) et non sur le tas (heap)
-    // => pas de free !
-    // => delete = NULL
-    hashtable_insert(&table_d_entiers, &n1, NULL) ;
-    hashtable_insert(&table_d_entiers, &n2, NULL) ;
-    hashtable_insert(&table_d_entiers, &n3, NULL) ;
-    hashtable_insert(&table_d_entiers, &n4, NULL) ;
+	FILE* ht_str_delete = fopen("./HT_STR_DELETE.txt", "w") ;
+	if (!ht_str_delete) goto cleanup_ht_str_search ;
 
-    hashtable_print(table_d_entiers, int_print, stdout) ;
-    // on se rend compte que l'ordre d'insertion n'est pas nécessairement conservé
-    printf("----------\n") ;
+	fprintf(ht_str_insert, "n;T_ms(n)\n") ;
+	fprintf(ht_str_search, "n;T_ms(n)\n") ;
+	fprintf(ht_str_delete, "n;T_ms(n)\n") ;
 
-    int n5 = -91 ;
-    int* trouve = hashtable_lookup(table_d_entiers, &n5) ;
-    if (trouve)
-        printf(
-            "Entier trouvé : %d\n"
-            "----------\n",
-            *trouve
-        ) ;
+	puts("==== Insertions / recherche / suppressions : HashTable de String ====") ;
+	
+	for (int n = 100 ; n <= NMAX ; n += 100) {
+		// Reset à NULL à chaque début de tour de boucle.
+		ht_chaines = hashtable_new(17, string_hash, string_cmp) ;
 
-    hashtable_retract(&table_d_entiers, &n1, NULL) ;
-    hashtable_print(table_d_entiers, int_print, stdout) ;
-    printf("----------\n") ;
+		//**
+		// * ================ INSERTIONS ================
+		// *
+		// Génération de n chaînes aléatoires de longueur entre 8 et 16 avant l'insertion :
+		char (*rand_str_array)[17] = malloc(n * sizeof *rand_str_array) ;
+		// Pointeur vers des tableaux de 17 caractères
+		if (!rand_str_array) goto cleanup_ht_str_delete ;
+		for (int i = 0 ; i < n ; ++i)
+			rand_str(rand_str_array[i], sizeof rand_str_array[i], 8, 16) ;
 
-    hashtable_delete(table_d_entiers, NULL) ;
+		// Début du chrono avant les n insertions
+		clock_t timer_start = clock() ;
 
-    return EXIT_SUCCESS ;
+		// Les n insertions (100, puis 200, puis 300, ... jusqu'à NMAX)
+		for (int k = 1 ; k <= n ; ++k) {
+			size_t strsize = strlen(rand_str_array[k - 1]) + 1UL ;
+			bool insert_is_successful = hashtable_insert(
+				&ht_chaines,
+				rand_str_array[k - 1],
+				string_del
+			) ;
+			if (!insert_is_successful) goto cleanup_str_then_next_loop_turn ;
+		}
+
+		// Fin du chrono après les n insertions
+		double elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		double elapsed_in_ms = 1e3 * elapsed_in_s ;
+
+		// Copie du temps écoulé pour les n insertions dans le fichier.
+		fprintf(ht_str_insert, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		//**
+		// * ================ RECHERCHES ================
+		// *
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une donnée déjà insérée
+				// (mais piochée au hasard dans le tableau des chaînes aléatoires générées).
+				int rand_i = rand_int(0, n - 1) ;
+				hashtable_lookup(
+					ht_chaines,
+					rand_str_array[rand_i]
+				) ;
+			}
+			else {
+				// Sinon, on recherche une chaîne aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_str".
+				char* chaine_alea = rand_str((char[17]) { 0 }, 17, 8, 16) ;
+				hashtable_lookup(
+					ht_chaines,
+					chaine_alea
+				) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(ht_str_search, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		//**
+		// * ================ SUPPRESSIONS ================
+		// *
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une donnée déjà insérée
+				// (mais piochée au hasard dans le tableau des chaînes aléatoires générées).
+				int rand_i = rand_int(0, n - 1) ;
+				hashtable_retract(
+					&ht_chaines,
+					rand_str_array[rand_i],
+					string_del
+				) ;
+			}
+			else {
+				// Sinon, on supprime une chaîne aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_str".
+				char* chaine_alea = rand_str((char[17]) { 0 }, 17, 8, 16) ;
+				hashtable_retract(
+					&ht_chaines,
+					chaine_alea,
+					string_del
+				) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(ht_str_delete, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		// free à chaque fin de tour de boucle.
+	cleanup_str_then_next_loop_turn :
+		free(rand_str_array) ;
+		hashtable_delete(ht_chaines, string_del) ;
+		//printf("%d\n", n) ;
+	}
+
+
+
+	// Ouverture des fichiers dans lesquels seront renseignés les résultats.
+	FILE* ht_dicoEntry_insert = fopen("./HT_DICOENTRY_INSERT.txt", "w") ;
+	if (!ht_dicoEntry_insert) goto cleanup_ht_str_delete ;
+
+	FILE* ht_dicoEntry_search = fopen("./HT_DICOENTRY_SEARCH.txt", "w") ;
+	if (!ht_dicoEntry_search) goto cleanup_ht_dicoEntry_insert ;
+
+	FILE* ht_dicoEntry_delete = fopen("./HT_DICOENTRY_DELETE.txt", "w") ;
+	if (!ht_dicoEntry_delete) goto cleanup_ht_dicoEntry_search ;
+
+	fprintf(ht_dicoEntry_insert, "n;T_ms(n)\n") ;
+	fprintf(ht_dicoEntry_search, "n;T_ms(n)\n") ;
+	fprintf(ht_dicoEntry_delete, "n;T_ms(n)\n") ;
+
+	puts("==== Insertions / recherche / suppressions : HashTable de DicoEntry ====") ;
+
+	for (int n = 100 ; n <= NMAX ; n += 100) {
+		// Reset à NULL à chaque début de tour de boucle.
+		ht_dictionnaire = hashtable_new(dicoEntrysize, dicoEntry_hash, dicoEntry_cmp) ;
+
+		//**
+		// * ================ INSERTIONS ================
+		// *
+		// Génération de n entrées aléatoires avant l'insertion :
+		DicoEntry* rand_dicoEntry_array = malloc(n * sizeof *rand_dicoEntry_array) ;
+		if (!rand_dicoEntry_array) goto cleanup_ht_dicoEntry_delete ;
+		for (int i = 0 ; i < n ; ++i) {
+			rand_dicoEntry_array[i] = rand_dicoEntry() ;
+		}
+
+		// Début du chrono avant les n insertions
+		clock_t timer_start = clock() ;
+
+		// Les n insertions (100, puis 200, puis 300, ... jusqu'à NMAX)
+		for (int k = 1 ; k <= n ; ++k) {
+			bool insert_is_successful = hashtable_insert(
+				&ht_dictionnaire,
+				&(rand_dicoEntry_array[k - 1]),
+				dicoEntry_del
+			) ;
+			// copie des pointeurs .key et .value dans le .data du noeud concerné.
+			if (!insert_is_successful) goto cleanup_dico_then_next_loop_turn ;
+		}
+
+		// Fin du chrono après les n insertions
+		double elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		double elapsed_in_ms = 1e3 * elapsed_in_s ;
+
+		// Copie du temps écoulé pour les n insertions dans le fichier.
+		fprintf(ht_dicoEntry_insert, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		//**
+		// * ================ RECHERCHES ================
+		// *
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une entrée déjà insérée
+				// (mais piochée au hasard dans le tableau des entrées aléatoires générées).
+				int rand_i = rand_int(0, n - 1) ;
+				hashtable_lookup(
+					ht_dictionnaire,
+					&(rand_dicoEntry_array[rand_i])
+				) ;
+			}
+			else {
+				// Sinon, on recherche une entrée aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_dicoEntry".
+				DicoEntry dicoEntry_alea = rand_dicoEntry() ;
+				hashtable_lookup(
+					ht_dictionnaire,
+					&dicoEntry_alea
+				) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(ht_dicoEntry_search, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		//**
+		// * ================ SUPPRESSIONS ================
+		// *
+		timer_start = clock() ;
+		for (int k = 1 ; k <= n ; ++k) {
+			if (k & 1) {
+				// Si k est impair : recherche d'une entrée déjà insérée
+				// (mais piochée au hasard dans le tableau des entrées aléatoires générées).
+				int rand_i = rand_int(0, n - 1) ;
+				hashtable_retract(
+					&ht_dictionnaire,
+					&(rand_dicoEntry_array[rand_i]),
+					dicoEntry_del
+				) ;
+			}
+			else {
+				// Sinon, on supprime une entrée aléatoire dans l'arbre,
+				// qu'elle y soit ou non, on fait "confiance à rand_dicoEntry".
+				DicoEntry dicoEntry_alea = rand_dicoEntry() ;
+				hashtable_retract(
+					&ht_dictionnaire,
+					&dicoEntry_alea,
+					dicoEntry_del
+				) ;
+			}
+		}
+		elapsed_in_s = (clock() - timer_start) / (CLOCKS_PER_SEC + 0.) ;
+		elapsed_in_ms = 1e3 * elapsed_in_s ;
+		fprintf(ht_dicoEntry_delete, "%d;%.3lf\n", n, elapsed_in_ms) ;
+
+		// free à chaque fin de tour de boucle.
+	cleanup_dico_then_next_loop_turn :
+		free(rand_dicoEntry_array) ;
+		hashtable_delete(ht_dictionnaire, dicoEntry_del) ;
+		//printf("%d\n", n) ;
+	}
+
+
+
+	EXIT_CODE = EXIT_SUCCESS ;
+
+cleanup_ht_dicoEntry_delete :
+	fclose(ht_dicoEntry_delete) ;
+cleanup_ht_dicoEntry_search :
+	fclose(ht_dicoEntry_search) ;
+cleanup_ht_dicoEntry_insert :
+	fclose(ht_dicoEntry_insert) ;
+
+cleanup_ht_str_delete :
+	fclose(ht_str_delete) ;
+cleanup_ht_str_search :
+	fclose(ht_str_search) ;
+cleanup_ht_str_insert :
+	fclose(ht_str_insert) ;
+
+cleanup_ht_int_delete :
+	fclose(ht_int_delete) ;
+cleanup_ht_int_search :
+	fclose(ht_int_search) ;
+cleanup_ht_int_insert :
+	fclose(ht_int_insert) ;
+
+exit_prog :
+	return EXIT_CODE ;
 }
