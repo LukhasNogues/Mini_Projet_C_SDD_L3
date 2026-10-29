@@ -12,11 +12,11 @@
 typedef struct _TreeAVLNode* TreeAVL ;
 
 struct _TreeAVLNode {
-	char data[1] ; // peut-être n'importe quoi, pas nécessairement un caractère
 	TreeAVL left ;
 	TreeAVL right ;
 	TreeAVL parent ;
 	int balance ; // hauteur fils droit moins hauteur fils gauche
+	char data[] ; // Flexible Array Member : peut être n'importe quoi, pas nécessairement un caractère
 } ;
 
 
@@ -27,12 +27,9 @@ struct _TreeAVLNode {
 
 // Constructeur et destructeur
 
-extern TreeAVL treeAVL_new() ;
+extern TreeAVL treeAVL_new(void) ;
 
-extern void treeAVL_delete(
-	TreeAVL tree,
-	void (*delete)(void*)
-) ;
+extern void treeAVL_delete(TreeAVL tree, void (*delete)(void*)) ;
 
 extern TreeAVL treeAVL_create(const void* data, size_t size) ;
 
@@ -40,13 +37,13 @@ extern TreeAVL treeAVL_create(const void* data, size_t size) ;
 
 // Getters
 
-extern void* tree_get_data(const TreeAVL tree) ;
+extern const void* tree_get_data(const TreeAVL tree) ;
 
-extern TreeAVL treeAVL_get_left(const TreeAVL tree) ;
+extern const TreeAVL treeAVL_get_left(const TreeAVL tree) ;
 
-extern TreeAVL treeAVL_get_right(const TreeAVL tree) ;
+extern const TreeAVL treeAVL_get_right(const TreeAVL tree) ;
 
-extern TreeAVL treeAVL_get_parent(const TreeAVL tree) ;
+extern const TreeAVL treeAVL_get_parent(const TreeAVL tree) ;
 
 extern int treeAVL_get_balance(const TreeAVL tree) ;
 
@@ -68,11 +65,11 @@ extern void treeAVL_in_order(TreeAVL tree, void (*func)(void*, void*), void* ext
 
 extern void treeAVL_post_order(TreeAVL tree, void (*func)(void*, void*), void* extra_data) ;
 
-extern size_t treeAVL_height(TreeAVL tree) ;
+extern int treeAVL_height(const TreeAVL tree) ;
 
-extern size_t treeAVL_size(TreeAVL tree) ;
+extern size_t treeAVL_size(const TreeAVL tree) ;
 
-extern bool treeAVL_isLeaf(TreeAVL tree) ;
+extern bool treeAVL_isLeaf(const TreeAVL tree) ;
 
 
 // INSERTION ÉQUILIBRÉE
@@ -91,22 +88,16 @@ extern bool treeAVL_del_data(
 	int (*data_cmp)(const void*, const void*)
 ) ;
 
-extern void* treeAVL_search(
-	TreeAVL tree,
+// Retourne le noeud dans lequel est contenue la donnée data recherchée
+extern const TreeAVL /* void* */ treeAVL_search(
+	const TreeAVL tree,
     const void* data,
-    int (*compare)(const void*, const void*)
-) ;
-
-extern int treeAVL_sort(
-	void* array,
-    size_t length,
-    size_t size,
     int (*compare)(const void*, const void*)
 ) ;
 
 //extern void treeAVL_RightRotation(TreeAVL* base_node) ;
 //extern void treeAVL_LeftRotation(TreeAVL* base_node) ;
 
-extern void treeAVL_show(const TreeAVL tree) ;
+extern void treeAVL_show(const TreeAVL tree, void (*data_print)(const void*)) ;
 
 #endif // TREE_AVL_H_

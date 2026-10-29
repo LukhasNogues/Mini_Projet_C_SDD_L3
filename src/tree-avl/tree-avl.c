@@ -22,7 +22,7 @@ void treeAVL_delete(TreeAVL tree, void (*delete)(void*)) {
 }
 
 TreeAVL treeAVL_create(const void* data, size_t size) {
-	TreeAVL tree = malloc(size + 3 * sizeof(TreeAVL) + sizeof(int)) ;
+	TreeAVL tree = malloc(3 * sizeof(TreeAVL) + sizeof(int) + size) ;
 	if (tree) {
 		// Recopie de data en mémoire,
 		// pas juste une simple réassignation des pointeurs tree->data = data ; <= non
@@ -41,23 +41,23 @@ TreeAVL treeAVL_create(const void* data, size_t size) {
  * Getters
  */
 
-void* tree_get_data(const TreeAVL tree) {
-	if (tree) return tree->data ;
+const void* tree_get_data(const TreeAVL tree) {
+	if (tree) return (const void*) tree->data ;
 	return NULL ;
 }
 
-TreeAVL treeAVL_get_left(const TreeAVL tree) {
-	if (tree) return tree->left ;
+const TreeAVL treeAVL_get_left(const TreeAVL tree) {
+	if (tree) return (const TreeAVL) tree->left ;
 	return NULL ;
 }
 
-TreeAVL treeAVL_get_right(const TreeAVL tree) {
-	if (tree) return tree->right ;
+const TreeAVL treeAVL_get_right(const TreeAVL tree) {
+	if (tree) return (const TreeAVL) tree->right ;
 	return NULL ;
 }
 
-TreeAVL treeAVL_get_parent(const TreeAVL tree) {
-	if (tree) return tree->parent ;
+const TreeAVL treeAVL_get_parent(const TreeAVL tree) {
+	if (tree) return (const TreeAVL) tree->parent ;
 	return NULL ;
 }
 
@@ -138,25 +138,22 @@ void treeAVL_post_order(TreeAVL tree, void (*func)(void*, void*), void* extra_da
 	func(tree->data, &tree->balance) ;
 }
 
-size_t treeAVL_height(TreeAVL tree) {
+int treeAVL_height(const TreeAVL tree) {
 	if (!tree) return 0 ;
 	return 1 + MAX(treeAVL_height(tree->left), treeAVL_height(tree->right)) ;
 }
 
-size_t treeAVL_size(TreeAVL tree) {
+size_t treeAVL_size(const TreeAVL tree) {
 	if (!tree) return 0 ;
 	return 1 + treeAVL_size(tree->left) + treeAVL_size(tree->right) ;
 }
 
-bool treeAVL_isLeaf(TreeAVL tree) {
+bool treeAVL_isLeaf(const TreeAVL tree) {
 	if (!tree) return false ;
 	return !tree->left && !tree->right ; // feuille <=> rien à gauche et rien à droite
 }
 
-static void _treeAVL_update_balance(TreeAVL node) {
-	if (!node) return ;
-	node->balance = treeAVL_height(node->right) - treeAVL_height(node->left) ;
-}
+
 
 // déclarations ici pour éviter l'erreur de déclaration implicite.
 static void _treeAVL_RightRotation(TreeAVL* base_node) ;
@@ -170,6 +167,8 @@ static void _treeAVL_LeftRotation(TreeAVL* base_node) ;
 //		pour voir si l'insertion a provoqué un déséquilibre
 // (iv) éventuellement, on rééquilibre au noeud actuel (qui est le parent de celui qu'on a inséré)
 // (v) : on remonte ainsi jusqu'à la racine
+
+/* Optimisation trop dure à implémenter, abandon
 bool treeAVL_add_data(
 	TreeAVL* ptree,
 	const void* data,
@@ -211,50 +210,225 @@ bool treeAVL_add_data(
 	else
 		parent_of_new_node->right = new_node ;
 
-	// MISE À JOUR DES BALANCES DES NOEUDS PARCOURUS (SEULS CEUX LÀ SONT CONCERNÉS) APRÈS L'INSERTION
+	// MISE À JOUR DES BALANCES DES NOEUDS PARCOURUS (SEULS CEUX LÀ SONT CONCERNÉS) APRÈS L'INSERTION, PENDANT LA REMONTÉE
 	TreeAVL p = parent_of_new_node ;
-	while (p) {
-		_treeAVL_update_balance(p) ;
-		p = p->parent ;
-	}
+	TreeAVL child = new_node ;
+	bool rebalance = true ;
 
-	// REMONTÉE
-	p = parent_of_new_node ;
 	while (p) {
-		int bal = p->balance ;
-		if (bal < -1) { // déséquilibre à gauche => rotation droite
-			if (p->left && p->left->balance > 0) _treeAVL_LeftRotation(&p->left) ;
-			_treeAVL_RightRotation(&p) ;
+		if (rebalance) {
+			if (child == p->left) p->balance-- ;
+			else p->balance++ ;
+
+			if (p->balance == 0) rebalance = false ;
+			else if (p->balance == -1 || p->balance == 1) ; // La hauteur a augmenté : on continue.
+			else {
+				if (p->balance == -2) { // déséquilibre à gauche => rotation droite
+					if (p->left && p->left->balance > 0) _treeAVL_LeftRotation(&p->left) ;
+					_treeAVL_RightRotation(&p) ;
+				}
+				else if (p->balance == 2) { // déséquilibre à droite => rotation gauche
+					if (p->right && p->right->balance < 0) _treeAVL_RightRotation(&p->right) ;
+					_treeAVL_LeftRotation(&p) ;
+				}
+				rebalance = false ;
+			}
 		}
-		else if (bal > 1) { // déséquilibre à droite => rotation gauche
-			if (p->right && p->right->balance < 0) _treeAVL_RightRotation(&p->right) ;
-			_treeAVL_LeftRotation(&p) ;
-		}
+		if (!p->parent) *ptree = p ; // RÉTABLISSEMENT DE LA RACINE D'ORIGINE (dernier parent non NULL)
+		child = p ;
 		p = p->parent ;
 	}
-	
-	// RÉTABLISSEMENT DE LA RACINE D'ORIGINE
-	p = parent_of_new_node ;
-	TreeAVL root ;
-	while (p) {
-		root = p ;
-		p = p->parent ;
-	}
-	*ptree = root ; // dernier parent non NULL
 	return true ;
 }
+*/
 
-
-// Convention ici : lorsqu'on supprime la racine,
-// son fils droit gagne sur le fils gauche pour prendre la place.
-
-static TreeAVL _treeAVL_get_rightmost_of_left_side(const TreeAVL node) {
-	if (!node || !node->left) return NULL ;
-
-	TreeAVL current = node->left ;
-	while (current->right) current = current->right ;
-	return current ;
+static TreeAVL* _treeAVL_get_link(TreeAVL* ptree, TreeAVL node) {
+    if (!node->parent) return ptree ;
+    if (node->parent->left == node) return &node->parent->left ;
+    return &node->parent->right ;
 }
+
+static void _treeAVL_rotate_left_insert(TreeAVL* link) {
+	TreeAVL x = *link ;
+	TreeAVL y = x->right ;
+	TreeAVL p = x->parent ;
+
+	x->right = y->left ;
+	if (y->left) y->left->parent = x ;
+	y->left = x ;
+	x->parent = y ;
+	y->parent = p ;
+
+	*link = y ;
+	// Rotation gauche : balance = hauteur droite - hauteur gauche
+	x->balance = 0 ;
+	y->balance = 0 ;
+}
+
+static void _treeAVL_rotate_right_insert(TreeAVL* link) {
+    TreeAVL x = *link ;
+    TreeAVL y = x->left ;
+    TreeAVL p = x->parent ;
+
+    x->left = y->right ;
+    if (y->right) y->right->parent = x ;
+    y->right = x ;
+    x->parent = y ;
+    y->parent = p ;
+
+    *link = y ;
+    // Rotation droite : balance = hauteur droite - hauteur gauche
+    x->balance = 0 ;
+    y->balance = 0 ;
+}
+
+static void _treeAVL_rotate_left_right_insert(TreeAVL* link) {
+    TreeAVL x = *link ;
+    TreeAVL y = x->left ;
+    TreeAVL z = y->right ;
+    TreeAVL p = x->parent ;
+
+    y->right = z->left ;
+    if (z->left) z->left->parent = y ;
+
+    x->left = z->right ;
+    if (z->right) z->right->parent = x ;
+
+    z->left = y ;
+    z->right = x ;
+
+    y->parent = z ;
+    x->parent = z ;
+    z->parent = p ;
+
+    *link = z ;
+
+    if (z->balance < 0) {
+        x->balance = 1 ;
+        y->balance = 0 ;
+    } else if (z->balance > 0) {
+        x->balance = 0 ;
+        y->balance = -1 ;
+    } else {
+        x->balance = 0 ;
+        y->balance = 0 ;
+    }
+    z->balance = 0 ;
+}
+
+static void _treeAVL_rotate_right_left_insert(TreeAVL* link) {
+    TreeAVL x = *link ;
+    TreeAVL y = x->right ;
+    TreeAVL z = y->left ;
+    TreeAVL p = x->parent ;
+
+    x->right = z->left ;
+    if (z->left) z->left->parent = x ;
+
+    y->left = z->right ;
+    if (z->right) z->right->parent = y ;
+
+    z->left = x ;
+    z->right = y ;
+
+    x->parent = z ;
+    y->parent = z ;
+    z->parent = p ;
+
+    *link = z ;
+
+    if (z->balance > 0) {
+        x->balance = -1 ;
+        y->balance = 0 ;
+    } else if (z->balance < 0) {
+        x->balance = 0 ;
+        y->balance = 1 ;
+    } else {
+        x->balance = 0 ;
+        y->balance = 0 ;
+    }
+    z->balance = 0 ;
+}
+
+bool treeAVL_add_data( // Optimisation made by ChatGPT
+	TreeAVL* ptree,
+	const void* data,
+	size_t size,
+	int (*compare)(const void*, const void*)
+) {
+    if (!ptree || !data || !compare) return false ;
+
+    TreeAVL parent = NULL ;
+    TreeAVL current = *ptree ;
+
+    // Recherche de la position d'insertion.
+    while (current) {
+        int cmp = compare(data, current->data) ;
+        //if (cmp == 0) return false ; // Doublon : insertion refusée.
+        parent = current ;
+        current = (cmp < 0) ? current->left : current->right ;
+    }
+
+    // Création du nouveau noeud.
+    TreeAVL node = treeAVL_create(data, size) ;
+    if (!node) return false ;
+
+    node->parent = parent ;
+
+    if (!parent) {
+        *ptree = node ;
+        return true ;
+    }
+
+    if (compare(data, parent->data) < 0) parent->left = node ;
+    else parent->right = node ;
+
+    // Remontée dans l'arbre.
+    // balance = hauteur droite - hauteur gauche.
+    TreeAVL child = node ;
+    TreeAVL x = parent ;
+
+    while (x) {
+        if (child == x->left) x->balance-- ;
+        else x->balance++ ;
+
+        // La hauteur de ce sous-arbre n'a pas augmenté.
+        if (x->balance == 0) break ;
+
+        // Le sous-arbre reste AVL et sa hauteur a augmenté.
+        if (x->balance == -1 || x->balance == 1) {
+            child = x ;
+            x = x->parent ;
+            continue ;
+        }
+
+        // Déséquilibre à gauche : LL ou LR.
+        if (x->balance == -2) {
+            TreeAVL* link = _treeAVL_get_link(ptree, x) ;
+            if (x->left->balance <= 0) {
+                _treeAVL_rotate_right_insert(link) ;
+            } else {
+                _treeAVL_rotate_left_right_insert(link) ;
+            }
+            break ;
+        }
+
+        // Déséquilibre à droite : RR ou RL.
+        if (x->balance == 2) {
+            TreeAVL* link = _treeAVL_get_link(ptree, x) ;
+            if (x->right->balance >= 0) {
+                _treeAVL_rotate_left_insert(link) ;
+            } else {
+                _treeAVL_rotate_right_left_insert(link) ;
+            }
+            break ;
+        }
+        break ;
+    }
+    return true ;
+}
+
+
 
 static TreeAVL _treeAVL_get_leftmost_of_right_side(const TreeAVL node) {
 	if (!node || !node->right) return NULL ;
@@ -264,6 +438,7 @@ static TreeAVL _treeAVL_get_leftmost_of_right_side(const TreeAVL node) {
 	return current ;
 }
 
+/*Optimisation trop dure à implémenter, abandon
 bool treeAVL_del_data(
 	TreeAVL* ptree,
 	const void* data,
@@ -271,29 +446,37 @@ bool treeAVL_del_data(
 	int (*data_cmp)(const void*, const void*)
 ) {
 	// Vérification de base
-	if (!ptree || !*ptree) return false ;
+	if (!ptree || !*ptree || !data_cmp) return false ;
 
 	// Recherche sans faire appel à search pour éviter de parcourir plusieurs fois l'arbre...
 	TreeAVL tgt_node = *ptree ; // Initialisation de la target (cible) : nécessairement non NULL à ce stade
-	int cmp = data_cmp(data, tgt_node->data) ;
-	while (tgt_node && cmp) {
+	int cmp ;
+	while (tgt_node && (cmp = data_cmp(data, tgt_node->data))) {
 		// Deux possibilités pour briser le while :
 		// tgt_node == NULL OU (INCLUSIF) cmp == 0
 		// si tgt_node vaut NULL, c'est que la donnée n'est pas présente, dans ce cas, rien à faire.
 		// si cmp vaut 0, on a trouvé la donnée.
-		cmp = data_cmp(data, tgt_node->data) ;
 		if (cmp < 0) tgt_node = tgt_node->left ;
 		else if (cmp > 0) tgt_node = tgt_node->right ;
 	}
 	if (!tgt_node) return false ;
 	// Sinon, la donnée est là et pointée par tgt_node
 
-	/* ======== SUPPRESSION ======== */
+	// ======== SUPPRESSION ========
 	TreeAVL
 	tgtP = tgt_node->parent,
 	tgtL = tgt_node->left,
 	tgtR = tgt_node->right ;
+
+	TreeAVL p_init = NULL ;
+	bool left_shrank = false ;
+	int tgtBal = tgt_node->balance ;
 	// 8 cas en tout.
+
+	//TreeAVL tgtL_rmost = _treeAVL_get_rightmost_of_left_side(tgt_node) ;
+
+	// Sauvegarde des références avant les déplacements des pointeurs...
+	// La sauvegarde doit donc être effectuée ici en anticipation de tout !
 
 	// 6 / 8 :
 	if (!tgtL || !tgtR) {
@@ -313,11 +496,7 @@ bool treeAVL_del_data(
 			}
 			tgtR->parent = tgtP ;
 			// le bi-lien entre tgtP et tgtR étant établi,
-			// on isole tgt_node pour le supprimer ensuite :
-
-			tgt_node->right = NULL ;
-			// avec cette affectation, tgt_node est au pire une feuille :
-			// pas besoin de faire tgt_node->parent = NULL ; le treeAVL_delete ne remonte pas.
+			// on isole tgt_node pour le supprimer ensuite (rôle du goto) :
 			goto node_destroy ;
 		}
 		else if (!tgtR) { // tgtL prend la place de tgt_node : cas symétrique du précédent
@@ -327,11 +506,7 @@ bool treeAVL_del_data(
 			}
 			tgtL->parent = tgtP ;
 			// le bi-lien entre tgtP et tgtL étant établi,
-			// on isole tgt_node pour le supprimer ensuite :
-
-			tgt_node->left = NULL ;
-			// avec cette affectation, tgt_node est au pire une feuille :
-			// pas besoin de faire tgt_node->parent = NULL ; le treeAVL_delete ne remonte pas.
+			// on isole tgt_node pour le supprimer ensuite (rôle du goto) :
 			goto node_destroy ;
 		}
 	}
@@ -342,9 +517,9 @@ bool treeAVL_del_data(
 	//		tgtL < tgt < tgtR < tgtP
 	//	=>	tgtL	<	 tgtR < tgtP
 	//
-	//			 tgtP				  tgtP
-	//			/					 /
-	//		 tgt <---	=>		 tgtR
+	//			 tgtP				 tgtP
+	//			/					/
+	//		 tgt <---	=>		tgtR
 	//		/	\	 ⦙			/
 	//	tgtL	 tgtR		tgtL
 	//
@@ -356,88 +531,73 @@ bool treeAVL_del_data(
 	//
 	//	tgtP				tgtP
 	//		\					\ 
-	//	---> tgt		=>		 tgtL
-	//	⦙	/	\					 \ 
-	//	tgtL	 tgtR				  tgtR
+	//		 tgt <---	=>		 tgtR
+	//		/	\	 ⦙			 /
+	//	tgtL	 tgtR		 tgtL
 	//
 	// (seule exception à la règle "fils droit gagne sur fils gauche", alors que mettre tgtR à la place de tgt ne brise pas l'ordre...)
 
-	TreeAVL tgtL_rmost_for_rebalance = _treeAVL_get_rightmost_of_left_side(tgt_node) ;
-	// Sauvegarde de la référence avant les déplacements des pointeurs...
-	// La sauvegarde doit donc être effectuée ici en anticipation.
+	// Que tgt_node soit la racine ou non (càd tgtP == NULL ou non), on convient que le plus
+	// à gauche de son côté droit, càd son successeur (qui ne peut pas avoir de fils gauche),
+	// le remplace.
+	TreeAVL succ = _treeAVL_get_leftmost_of_right_side(tgt_node) ;
+	if (succ == tgtR) {
+		// tgtR prend la place de tgt_node, récupération de son fils gauche :
+		succ->left = tgtL ;
+		// le fils gauche change de parent :
+		tgtL->parent = succ ;
 
-	if (!tgtP) {
-		// Si pas de parent pour tgt_node, c'est que c'est la racine, et on convient que son fils
-		// droit le remplace ** APPLICATION DE LA CONVENTION **
-		tgtR->parent = NULL ;
-
-		TreeAVL tgtL_rmost = _treeAVL_get_rightmost_of_left_side(tgt_node) ;
-		// Par définition, tgtL_rmost->right == NULL, et il nous faut un endroit où caser
-		// tgtR->left, car tgtL doit devenir le nouveau tgtR->left.
-		// tgtL_rmost->right est garanti d'être libre à droite, et y insérer là le fils gauche de
-		// tgtR respecte l'ordre d'un arbre binaire :
-		// l'élément le plus à droite de la partie gauche - notons-le D+ - est nécessairement plus
-		// petit que n'importe quel élément de la partie droite,
-		// donc placer le sous-arbre dont la racine est tgtR->left "en bas" à droite de D+, fait
-		// d'une part perdre le statut d'"élément le plus à droite de la moitié gauche",
-		// mais d'autre part préserve bien l'ordre.
-		tgtL_rmost->right = tgtR->left ;
-		if (tgtR->left) tgtR->left->parent = tgtL_rmost ;
-
-		tgtR->left = tgtL ;   // \_
-		tgtL->parent = tgtR ; // /- bi-lien entre tgtR et tgtL
+		succ->parent = tgtP ;
+		if (tgtP && tgtP->left == tgt_node) tgtP->left = succ ;
+		else if (tgtP && tgtP->right == tgt_node) tgtP->right = succ ;
+		goto node_destroy ;
 	}
-	else {
-		// tgt_node a un parent
-		if (tgt_node == tgtP->left) { // tgtR remplace tgt_node
-			tgtP->left = tgtR ;		// \_
-			tgtR->parent = tgtP ;	// /- bi-lien entre tgtP et tgtR
 
-			TreeAVL tgtL_rmost = _treeAVL_get_rightmost_of_left_side(tgt_node) ;
-			tgtL_rmost->right = tgtR->left ;
-			if (tgtR->left) tgtR->left->parent = tgtL_rmost ;
+	TreeAVL succP = succ->parent ; // seulement si succ != tgtR
+	TreeAVL succR = succ->right ; // Si succ a un fils, il est forcément à droite.
 
-			tgtR->left = tgtL ;   // \_
-			tgtL->parent = tgtR ; // /- bi-lien entre tgtR et tgtL
-		}
-		else { // tgtL remplace tgt_node : symétrique à celui du dessus
-			tgtP->right = tgtL ;	// \_
-			tgtL->parent = tgtP ;	// /- bi-lien entre tgtP et tgtL
+	// Le fils de successeur (NULL ou non) remplace successeur.
+	succP->left = succR ; // succ était forcément à gauche de son parent
+	if (succR) succR->parent = succP ;
 
-			TreeAVL tgtR_lmost = _treeAVL_get_leftmost_of_right_side(tgt_node) ;
-			tgtR_lmost->left = tgtL->right ;
-			if (tgtL->right) tgtL->right->parent = tgtR_lmost ;
+	// succ prend ensuite la place de tgt_node
+	succ->left = tgtL ;
+	succ->right = tgtR ;
+	tgtL->parent = tgtR->parent = succ ;
 
-			tgtL->right = tgtR ;	// \_
-			tgtR->parent = tgtL ;	// /- bi-lien entre tgtL et tgtR
-		}
-	}
-	// isolement de tgt_node :
-	tgt_node->left = tgt_node->right = NULL ;
+	succ->parent = tgtP ; // qu'il soit NULL ou non
+	if (tgtP && tgtP->left == tgt_node) tgtP->left = succ ;
+	else if (tgtP && tgtP->right == tgt_node) tgtP->right = succ ;
 
 	node_destroy :
+		// isolement de tgt_node avant destruction :
+		tgt_node->left = tgt_node->right = NULL ;
 		treeAVL_delete(tgt_node, data_delete) ;
 
 
-	/* ======== RÉÉQUILIBRAGE DE L'ARBRE APRÈS LA SUPPRESSION ======== */
+	// ======== RÉÉQUILIBRAGE DE L'ARBRE APRÈS LA SUPPRESSION ========
+	TreeAVL p_init = NULL ;
+	// Si 2 fils :
+	if (tgtL && tgtR) {
+		if (succ != tgtR) p_init = succP ;
+		else p_init = tgtR ;
+	}
+	// Sinon, si 0 ou 1 noeud fils...
+	// ... si parent : départ = lui
+	else if (tgtP) p_init = tgtP ;
+	// ... sinon : il n'y avait que deux noeuds (tgt_node et son unique noeud fils)
+	else p_init = (tgtL) ? tgtL : tgtR ;
 
 	// MISE À JOUR DES BALANCES DES NOEUDS PARCOURUS (SEULS CEUX LÀ SONT CONCERNÉS)
-	// APRÈS LA SUPPRESSION
-	TreeAVL p_init = (tgtL && tgtR) ? tgtL_rmost_for_rebalance : tgtP ;
-	// ** CORRECTION ** du point de départ pour le rééquilibrage :
-	// on détermine dans chaque cas à partir de quel(s) noeud(s) il y a du déséquilibre (quels sont
-	// les balances qui ont changé par rapport à avant la suppression) => niveau le plus bas où il y
-	// a du déséquilibre / niveau le plus haut où l'équilibre est resté le même qu'avant.
-	// ** APPLICATION DE LA CONVENTION ** (indirectement) dans le cas où tgtL et tgtR sont valides.
+	// APRÈS LA SUPPRESSION, ET PENDANT LA REMONTÉE
 	TreeAVL p = p_init ;
+	TreeAVL root = NULL ;
 	while (p) {
-		_treeAVL_update_balance(p) ;
-		p = p->parent ;
-	}
+		// ASTUCE : comme les rotations s'annulent entre elles, et qu'elles mettent
+		// à jour les balances sans récursion ET en temps constant... autant en profiter !
+		_treeAVL_LeftRotation(&p) ;
+		_treeAVL_RightRotation(&p) ;
 
-	// REMONTÉE
-	p = p_init ;
-	while (p) {
 		int bal = p->balance ;
 		if (bal < -1) { // déséquilibre à gauche => rotation droite
 			if (p->left && p->left->balance > 0) _treeAVL_LeftRotation(&p->left) ;
@@ -447,17 +607,11 @@ bool treeAVL_del_data(
 			if (p->right && p->right->balance < 0) _treeAVL_RightRotation(&p->right) ;
 			_treeAVL_LeftRotation(&p) ;
 		}
+		root = p ; // Après les rotations qui changent p, mais avant le p = p->parent !
 		p = p->parent ;
 	}
 
-	/* ======== RÉTABLISSEMENT DE LA RACINE (MÀJ POINTEUR VERS LA RACINE) ======== */
-
-	p = p_init ;
-	TreeAVL root = NULL ;
-    while (p) {
-		root = p ;
-		p = p->parent ;
-	}
+	// ======== RÉTABLISSEMENT DE LA RACINE (MÀJ POINTEUR VERS LA RACINE) ========
 	*ptree = root ;
 	// Si p_init = NULL, alors c'est que plus rien n'a pu remplacer les éléments supprimés,
 	// l'arbre est alors vide, donc le while est ignoré et *ptree reçoit NULL : on change
@@ -470,9 +624,127 @@ bool treeAVL_del_data(
 	// celle-ci est très susceptible (very likely) de changer.
 	return true ;
 }
+*/
 
-void* treeAVL_search(
-	TreeAVL tree,
+bool treeAVL_del_data( // Optimisation made by Gemini
+    TreeAVL* ptree,
+    const void* data,
+    void (*data_delete)(void*),
+    int (*data_cmp)(const void*, const void*)
+) {
+	if (!ptree || !*ptree || !data_cmp) return false ;
+
+	TreeAVL node = *ptree ;
+	int cmp ;
+	while (node && (cmp = data_cmp(data, node->data))) node = (cmp < 0) ? node->left : node->right ;
+	if (!node) return false ;
+
+	TreeAVL parent = node->parent ;
+	TreeAVL left = node->left ;
+	TreeAVL right = node->right ;
+	TreeAVL p_init = NULL ;
+	bool left_shrank = false ;
+
+	// --- CAS 1 : 0 ou 1 fils ---
+	if (!left || !right) {
+		TreeAVL child = left ? left : right ;
+		left_shrank = parent && (parent->left == node) ;
+		if (parent) {
+			if (parent->left == node) parent->left = child ;
+			else parent->right = child ;
+		}
+		else *ptree = child ;
+
+		if (child) child->parent = parent ;
+		p_init = parent ;
+		node->left = node->right = node->parent = NULL ;
+		treeAVL_delete(node, data_delete) ;
+	}
+	// --- CAS 2 : 2 fils ---
+	else {
+		TreeAVL succ = _treeAVL_get_leftmost_of_right_side(node) ;
+		TreeAVL succ_parent = succ->parent ;
+		TreeAVL succ_right = succ->right ;
+
+		if (succ == right) {
+			succ->left = left ;
+			left->parent = succ ;
+
+			succ->parent = parent ;
+			if (parent) {
+				if (parent->left == node) parent->left = succ ;
+				else parent->right = succ ;
+			}
+			else *ptree = succ ;
+			succ->balance = node->balance - 1 ;
+			p_init = succ ;
+			left_shrank = false ;
+		}
+		else {
+			succ_parent->left = succ_right ;
+			if (succ_right) succ_right->parent = succ_parent ;
+			succ->left = left ;
+			succ->right = right ;
+			left->parent = succ ;
+			right->parent = succ ;
+			succ->parent = parent ;
+			if (parent) {
+				if (parent->left == node) parent->left = succ ;
+				else parent->right = succ ;
+			}
+			else *ptree = succ ;
+			succ->balance = node->balance ;
+			p_init = succ_parent ;
+			left_shrank = true ;
+		}
+		node->left = node->right = node->parent = NULL ;
+		treeAVL_delete(node, data_delete) ;
+	}
+	// --- RÉÉQUILIBRAGE ---
+	TreeAVL p = p_init ;
+	while (p) {
+		p->balance += left_shrank ? 1 : -1 ;
+		if (p->balance == -1 || p->balance == 1) break ; // La hauteur n'a pas changé globalement
+		if (p->balance == 0) {
+			TreeAVL child = p ;
+			p = p->parent ;
+			if (p) left_shrank = (p->left == child) ;
+			continue ;
+		}
+		TreeAVL* link = p->parent
+			? ((p->parent->left == p) ? &(p->parent->left) : &(p->parent->right))
+			: ptree ;
+
+		if (p->balance == 2) {
+			int b = p->right ? p->right->balance : 0 ;
+			if (b < 0) _treeAVL_RightRotation(&(p->right)) ;
+			_treeAVL_LeftRotation(link) ;
+		}
+		else if (p->balance == -2) {
+			int b = p->left ? p->left->balance : 0 ;
+			if (b > 0) _treeAVL_LeftRotation(&(p->left)) ;
+			_treeAVL_RightRotation(link) ;
+		}
+		TreeAVL new_root = *link ;
+		if (!new_root) break ;
+
+		if (new_root->balance == 0) {
+			p = new_root->parent ;
+			if (p) left_shrank = (p->left == new_root) ;
+		}
+		else break ; // Hauteur stabilisée
+	}
+	// Sécurité de mise à jour de la racine
+	TreeAVL root = *ptree ;
+	while (root && root->parent) root = root->parent ;
+	if (root) *ptree = root ;
+	return true ;
+}
+
+
+
+const TreeAVL /* void* */ treeAVL_search(
+	const TreeAVL tree,
 	const void* data,
 	int (*compare)(const void*, const void*)
 ) {
@@ -481,7 +753,7 @@ void* treeAVL_search(
 		case -1 :
 			return treeAVL_search(tree->left, data, compare) ;
 		case 0 :
-			return tree->data ;
+			return tree ; //tree->data ;
 		case 1 :
 			return treeAVL_search(tree->right, data, compare) ;
 		default :
@@ -489,47 +761,9 @@ void* treeAVL_search(
 	}
 }
 
-static void _set(void* data, void* array) {
-	static size_t size ;
-	static size_t offset ;
-	if (data) {
-		memcpy(array + offset, data, size) ;
-		offset += size ;
-	} else {
-		offset = 0 ;
-		size = *(size_t*) array ;
-	}
-}
-
-int treeAVL_sort(
-	void *array,
-	size_t length,
-	size_t size,
-	int (*compare)(const void*, const void*)
-) {
-	size_t i ;
-	TreeAVL tree = treeAVL_new() ;
-	void* pointer ;
-
-	pointer = array ;
-	for (i = 0 ; i < length ; i++) {
-		if (treeAVL_add_data(&tree, pointer, size, compare)) pointer += size ;
-		else {
-			treeAVL_delete(tree, NULL) ;
-			return false ;
-		}
-	}
-	_set(NULL, &size) ;
-	treeAVL_in_order(tree, _set, array) ;
-	treeAVL_delete(tree, NULL) ;
-	return true ;
-}
-
 /**
  * Rotations
  */
-
-
 
 /**
  * (i) AVANT ROTATION DROITE :
@@ -690,21 +924,23 @@ static void _treeAVL_LeftRotation(TreeAVL* base_node) {
 }
 
 
-
-static void _treeAVL_show_level(TreeAVL node, int level, int target_level, int spaces) {
+static void _treeAVL_show_level(const TreeAVL node, int level, int target_level, int spaces, void (*data_print)(const void*)) {
     if (level == target_level) {
-        if (node) printf("%d", *(int*) node->data) ;
-        else printf(" ") ;
-        for (int i = 0; i < spaces; i++) printf(" ") ;
+        if (node) {
+			data_print(node->data) ;
+			printf("(%s%d)", node->balance < 0 ? "" : "+", node->balance) ;
+		}
+        else putchar(' ') ;
+        for (int i = 0; i < spaces; i++) putchar(' ') ;
         return ;
     }
-    _treeAVL_show_level(node ? node->left : NULL, level + 1, target_level, spaces) ;
-    _treeAVL_show_level(node ? node->right : NULL, level + 1, target_level, spaces) ;
+    _treeAVL_show_level(node ? node->left : NULL, level + 1, target_level, spaces, data_print) ;
+    _treeAVL_show_level(node ? node->right : NULL, level + 1, target_level, spaces, data_print) ;
 }
 
-void treeAVL_show(TreeAVL tree) {
+void treeAVL_show(const TreeAVL tree, void (*data_print)(const void*)) {
     if (!tree) {
-		printf("(arbre vide)\n") ;
+		puts("(arbre vide)") ;
 		return ;
     }
 
@@ -714,8 +950,8 @@ void treeAVL_show(TreeAVL tree) {
         int spaces_before = (1 << (height - level)) - 1 ;
         int spaces_between = (1 << (height - level + 1)) - 1 ;
 
-        for (int i = 0 ; i < spaces_before ; ++i) printf(" ") ;
-        _treeAVL_show_level(tree, 0, level, spaces_between) ;
-        printf("\n") ;
+        for (int i = 0 ; i < spaces_before ; ++i) putchar(' ') ;
+        _treeAVL_show_level(tree, 0, level, spaces_between, data_print) ;
+        putchar(10) ;
     }
 }
